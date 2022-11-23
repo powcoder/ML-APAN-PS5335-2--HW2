@@ -1,0 +1,453 @@
+---
+title: 'APAN5335 Summer 2020 HW2 - Due: July 15, 2020'
+author: 'images, linear algebra, regression, and naive bayes classification'
+output:
+  html_document:
+    df_print: paged
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+library(dslabs)
+library(png)
+library(MASS)
+library(ggplot2)
+```
+
+
+
+
+## A (15 pts). Review of image representations and some linear algebra in R 
+
+We use the png library to load a bitmap image.  (Modify the path as necessary)
+
+```{r}
+# load 
+mickey <- readPNG("~/Desktop/mickey.png")
+```
+
+The result of readPNG is a set of three 2-dimensional matrices, one for each color channel.
+
+Let's take just one of those channels to work with.  We will also invert it, so that the color values will represent saturation, rather than RGB intensities (ie. the bigger the number the darker the color, and 0 is means we're not drawing anything).
+```{r}
+negmickey <- 1 - mickey[,,1]
+```
+
+We can plot this bitmap image using the image() function that is build into R 
+
+```{r}
+image(negmickey)
+```
+It appears that the x and y coordinates are reversed.. We can transpose the matrix (ie. swap x and y coordinates by flipping all the values over the diagonal) to try to fix this.  The R function to take the matrix transpose is `t()`.
+
+#### Q A1 (2 pts): Define a 3x3 matrix that is not symmetric. Print the matrix, as well as its transpose.  
+```{r}
+matrix_A1 = matrix(1:9, nrow = 3, ncol = 3)
+```
+
+```{r}
+transpose_A1 = t(matrix_A1)
+```
+
+#### Q A2 (1 pt): Recall that the transpose of a row vector is a column vector, and vice versa.  Construct an example of a 3x1 vector and show this.
+
+```{r}
+matrix_A2 = matrix(1:3, nrow = 3, ncol = 1)
+
+transpose_A2 = t(matrix_A2)
+
+transpose_A2
+```
+
+
+#### Q A3 (2 pts): R uses the `%*%` operator both for the dot product and for matrix multiplication.  If the operands are two vectors with the same length, then `%*%` will compute the dot product; if they are matrices with the appropriate dimension, it'll do matrix multiplication.  Demonstrate this using the vectors and matrices that you defined above, and observing the dimensions of the outputs.
+
+```{r}
+# matrix multiplication
+matrix_A1 %*% transpose_A1
+
+# vector dot product
+matrix_A2 %*% transpose_A2
+```
+
+
+#### Q A4 (2 pts): Now that you know how to transpose a matrix, draw the transposed version of the image.  You will also need to reverse the direction of the axis, since the image format assumes that the origin is in the top left, while R plots assume the origin starts at the bottom left.  You can do this by specifying `ylim` in the call to `image`.
+
+```{r}
+transpose_mickey = t(negmickey)
+image(transpose_mickey,ylim=rev(range(0,1)))
+```
+
+We'll also briefly review linear transformations, as an application of matrix multiplication.  Since we're working in 2D, it will be helpful to work with clouds of points rather than bitmaps, to make the connection between matrix transformations and what is happening to the points in the image more explicit.  The helper function below takes a bitmap and turns it into a list of points in a matrix with two columns, and also returns a separate vector with the color values.  Keeping these separate will just make manipulating the locations of the points easier.  
+
+```{r}
+# raster_to_cloud
+# this is a little helper function to convert the bitmap image obtained from a jpeg, into a "point cloud" format 
+# as a list of points.  For the purposes of doing linear transformations, it is a bit simpler to work with the points explicitly
+# raster_image : an image loaded from readPNG
+# colorchannel : the color channel to use; the result is a monochrome image
+raster_to_cloud <- function(raster_image, colorchannel=1) {
+  pointLocations <- c()
+  pointColors <-c()
+
+  numPoints <- sum(raster_image[,,colorchannel] < 1)
+
+  print(paste0("Converting image of size: ", paste(dim(raster_image), collapse=" " )))
+  print(paste0( numPoints, " points"))
+  
+  pointLocations <- matrix(0, nrow=numPoints, ncol=2)
+  pointColors <- rep(0, numPoints)
+  n <- 1
+  for (i in 1:dim(raster_image)[1]) {
+    for (j in 1:dim(raster_image)[2]) {
+      if (raster_image[i, j, colorchannel] < 1) {
+        pointLocations[n, 1] <- j
+        pointLocations[n, 2] <- i
+        pointColors[n] <- raster_image[i, j, colorchannel]
+        n <- n+1
+      }
+    }
+  }
+  return (list(locs=pointLocations, colors=pointColors))
+}
+```
+
+Convert to our point cloud / matrix representation
+```{r}
+mickey_cloud <- raster_to_cloud(mickey)
+```
+
+```{r}
+# plot_point_cloud 
+# helper function to plot an image that is represented as a 2D point cloud with a separate list of (monochrome) intensities
+# ggplot is a bit slow for this sort of thing, but it a convenient way to work with this representation
+# pointLocations is an n X 2 matrix of the points
+# pointColors is a separate n X 1 vector of their intensities 
+# axis scale controls the scale of the plot
+plot_point_cloud <- function(pointLocations, pointColors, axis.scale=1000) {
+  points_df <- data.frame(pointLocations)
+  points_df$col <- pointColors
+  colnames(points_df) <- c("x", "y", "col")
+  ggplot(points_df, aes(x=x, y=y, col=col)) + geom_point(alpha=0.1, size=0.2) + 
+    scale_color_gradient(low = "white", high="red") +  xlim(-axis.scale, axis.scale) + ylim(axis.scale, -axis.scale) 
+}
+```
+
+After converting the image to this form, we can use the plot_point_cloud function to draw it, using ggplot2.
+
+```{r}
+plot_point_cloud(pointLocations = mickey_cloud$locs, 
+                 pointColors = 1-mickey_cloud$colors, 
+                 axis.scale = 500)
+```
+
+####  Q A5 ( 3 pts) Draw the transposed version of this image using the new representation.
+```{r}
+#Method 1
+plot_point_cloud(pointLocations = mickey_cloud$locs, 
+                 pointColors = 1-mickey_cloud$colors, 
+                 axis.scale = -500)
+
+#Method 2
+raster_to_cloud <- function(raster_image, colorchannel=1) {
+  pointLocations <- c()
+  pointColors <-c()
+
+  numPoints <- sum(raster_image[,,colorchannel] < 1)
+
+  print(paste0("Converting image of size: ", paste(dim(raster_image), collapse=" " )))
+  print(paste0( numPoints, " points"))
+  
+  pointLocations <- matrix(0, nrow=numPoints, ncol=2)
+  pointColors <- rep(0, numPoints)
+  n <- 1
+  for (i in 1:dim(raster_image)[1]) {
+    for (j in 1:dim(raster_image)[2]) {
+      if (raster_image[i, j, colorchannel] < 1) {
+        pointLocations[n, 1] <- j
+        pointLocations[n, 2] <- i
+        pointColors[n] <- raster_image[i, j, colorchannel]
+        n <- n+1
+      }
+    }
+  }
+  return (list(locs=pointLocations, colors=pointColors))
+}
+plot_point_cloud <- function(pointLocations, pointColors, axis.scale=1000) {
+  points_df <- data.frame(pointLocations)
+  points_df$col <- pointColors
+  colnames(points_df) <- c("x", "y", "col")
+  ggplot(points_df, aes(x=x, y=y, col=col)) + geom_point(alpha=0.1, size=0.2) + 
+    scale_color_gradient(low = "white", high="red") +  xlim(axis.scale, -axis.scale) + ylim(-axis.scale, axis.scale) 
+}
+
+plot_point_cloud(pointLocations = mickey_cloud$locs, 
+                 pointColors = 1-mickey_cloud$colors, 
+                 axis.scale = 500)
+```
+
+#### Q A6 (3 pts) Magnify the image by 4X using matrix multiplication with an appropriate transformation matrix, and plot the result.
+
+```{r}
+raster_to_cloud <- function(raster_image, colorchannel=1) {
+  pointLocations <- c()
+  pointColors <-c()
+
+  numPoints <- sum(raster_image[,,colorchannel] < 1)
+
+  print(paste0("Converting image of size: ", paste(dim(raster_image), collapse=" " )))
+  print(paste0( numPoints, " points"))
+  
+  pointLocations <- matrix(0, nrow=numPoints, ncol=2)
+  pointColors <- rep(0, numPoints)
+  n <- 1
+  for (i in 1:dim(raster_image)[1]) {
+    for (j in 1:dim(raster_image)[2]) {
+      if (raster_image[i, j, colorchannel] < 1) {
+        pointLocations[n, 1] <- j
+        pointLocations[n, 2] <- i
+        pointColors[n] <- raster_image[i, j, colorchannel]
+        n <- n+1
+      }
+    }
+  }
+  return (list(locs=pointLocations, colors=pointColors))
+}
+
+mickey_cloud <- raster_to_cloud(mickey)
+
+plot_point_cloud <- function(pointLocations, pointColors, axis.scale=1000) {
+  points_df <- data.frame(pointLocations)
+  points_df$col <- pointColors
+  colnames(points_df) <- c("x", "y", "col")
+  ggplot(points_df, aes(x=x, y=y, col=col)) + geom_point(alpha=0.1, size=0.2) + 
+    scale_color_gradient(low = "white", high="red") +  xlim(-axis.scale, axis.scale) + ylim(axis.scale, -axis.scale) 
+}
+
+plot_point_cloud(pointLocations = mickey_cloud$locs%*%matrix(c(4,0,0,4), nrow = 2), 
+                 pointColors = 1-mickey_cloud$colors, 
+                 axis.scale = 1800)
+
+```
+
+
+#### Q A7 (3 pts) Rotate the image by 35 degrees clockwise using matrix multiplication with the appropriate transformation matrix and show the result.
+
+```{r}
+plot_point_cloud(
+  pointLocations = mickey_cloud$locs%*%matrix(c(0.90369,-0.9998,0.9998,0.90369), nrow = 2),
+  pointColors = 1-mickey_cloud$colors, 
+  axis.scale = 1000)
+
+```
+
+
+# B: Linear Regression (45 points) 
+
+ Recalll that in simple linear regression, we model our prediction $\hat{y}$ as a (linear) function of x: 
+ $\hat{y} = \beta_{1}x_i + \beta_{0} + \epsilon_i$
+
+#### B1 (5 points) What are the maximum likelihood estimators for $\beta_1$ and $\beta_0$?  (Note, you do not need to derive them; just look them up and state them.) 
+```{r}
+#The likelihood ofa parameter value on a data set is the probability density at the data under those parameters.In linear regression, the least squares solution is the maximum likelihood estimator. We want to find coefficients to make the regression line as "close" as possible to all of the data points by minimizing the least squares criterion. Residual sum of squares ar ethe sum of diferences between each actual value of Y and predicted value of Y. Lease squares choese beta hat 0 and beta hat 1 to minimize the RSS. 
+```
+
+#### B2 (5 points) Write **your own** R functions to calculate $\beta_1$ and $\beta_0$ given an $x$ and $y$ vector, based on the MLE equations you stated above.
+```{r}
+y = β1xi + β0 + ϵi
+
+Sxy = sum((x - mean(x)) * (y - mean(y)))
+Sxx = sum((x - mean(x)) ^ 2)
+Syy = sum((y - mean(y)) ^ 2)
+c(Sxy, Sxx, Syy)
+
+beta_1_hat = Sxy / Sxx
+beta_0_hat = mean(y) - beta_1_hat * mean(x)
+c(beta_0_hat, beta_1_hat)
+
+```
+
+	
+#### B3 (5 points) Load the Auto dataset from the ISLR package, and make a scatterplot of horsepower vs. weight. Clearly label your plot.
+
+```{r}
+install.packages("ISLR")
+library("ISLR")
+head(Auto)
+attach(Auto)
+plot(horsepower, weight, main = "Scatterplot of weight vs. horsepower", xlab = "horsepower", ylab = "weight", col = "blue")
+```
+
+#### B5 (5 points) Using the functions you wrote above, compute the maximum likelihood estimates of $\beta_1$ and $\beta_0$ given the data (weight $x$ and horsepower $y$).  Plot the data and a line of best fit using the parameters that you estimated. (You can use the R lm() function to check that your estimates are right!)
+```{r}
+Sxy = sum((horsepower - mean(horsepower)) * (weight - mean(weight)))
+Sxx = sum((horsepower - mean(horsepower)) ^ 2)
+Syy = sum((weight - mean(weight)) ^ 2)
+c(Sxy, Sxx, Syy)
+
+beta_1_hat = Sxy / Sxx
+beta_0_hat = mean(weight) - beta_1_hat * mean(horsepower)
+c(beta_0_hat, beta_1_hat)
+
+# weight = 19.08*horsepower - 984.50
+
+#check with lm
+lm(weight~horsepower)
+# horsepower coefficient is 19.08, the same as beta_1_hat computed above. 
+```
+
+
+#### B6 (5 points) Provide a 95\% confidence interval for your estimates of $\beta_1$ and $\beta_0$ using the analytical formula 
+```{r}
+#Use dataset Auto
+Auto
+#confidence interval = average +- 1.96*se
+
+ave = mean(horsepower)
+#sample size is 392
+n = nrow(Auto)
+
+sd = sd(horsepower)
+se = sd/sqrt(n)
+
+lower_bound = ave - 1.96*se
+upper_bound = ave + 1.96*se
+c(lower_bound,upper_bound)
+# confidence interval is [100.6590 108.2798]
+```
+
+
+#### B7 (5 points) Compute a 95% confidence interval for $\beta_1$ and $\beta_0$ using the bootstrap.  (You can use the R boot function to help; you don't need to implement the full bootstrap procedure yourself here)
+```{r}
+install.packages("boot")
+library(boot)
+
+B = 392
+n = 392
+boot.samples = matrix( sample(horsepower,size=n*B,replace=TRUE), B, n)
+boot.statistics = apply(boot.samples,1,mean)
+se = sd(boot.statistics)
+
+interval = mean(horsepower) + c(-1,1)*2*se
+print( interval )
+
+# confidence interval is [100.4753 108.4634]
+```
+
+
+#### B8 (5 points) Recall that that the matrix formulation of the OLS estimator is $\hat{\beta}= {(X^TX)}^{-1} X^Ty$ 
+Write an R function that implements this (for matrices of arbitrary dimensions).
+```{r}
+n = nrow(data)
+p = length(coef(data))
+X = cbind(rep(1, n), variable_1, variable_2)
+y = dependent_variable
+
+(beta_hat = solve(t(X) %*% X) %*% t(X) %*% y)
+```
+
+
+#### B9 (5 points) Construct some example data where the $y$ is a linear function of two independent variables (ie. a plane), with some Gaussian noise added.  Show that the OLS estimator you implemented above correctly recovers the parameters.
+```{r}
+income <- c(2000,3000,6204, 2573,7420,5028,1032,4692,7254,5748)
+Workyears <- c(2,3,6,1,8,5,2,3,6,4)
+joblevel <- c(1,2,5,2,5,4,1,3,3,4)
+
+data = data.frame("income" = income, "Workyears" = Workyears, "joblevel" = joblevel)
+n = nrow(data)
+X = cbind(rep(1, n), data$Workyears, data$joblevel)
+y = data$income
+
+(beta_hat = solve(t(X) %*% X) %*% t(X) %*% y)
+
+# Intercept is 396.5549, coefficient of Workyears is 561.9804, coefficient of joblevel is 616.8745. 
+# income = 561.9804*Workyears + 616.8745*joblevel + 396.5549
+
+```
+
+
+# C: Naive Bayes Classifier (40 points)
+
+Let's construct a couple of simple Naive Bayes classifiers to distinguish between digits.  We will first use a simple Bernoulli model of binary pixels, and then do the same thing using Gaussians to model the pixels.  For this problem, you should implement the algorithms yourself -- do not use an R package that implements Naive Bayes.  The MNIST data is available in the `dslabs` package as `mnist`, and contains separate train and test datasets.
+
+#### C1. (3 pts)  Plot 5 examples of each of the digits from the training data (there is a function called draw_mnist_image() defined below that may be helpful, and you can use par() to set up a grid of images).
+```{r}
+library(dslabs)
+library(readr)
+
+str(mnist)
+
+draw_mnist_image <- function(data, index) {
+  image(1:28, 1:28, matrix(data[index,], nrow=28)[ , 28:1], col = gray(seq(0, 1, 0.05)), xlab = "", ylab="")
+}
+
+labels = sort(unique(mnist$train$labels))
+
+par(mfrow = c(10,5), mar = c(0.1,0.1,0.1,0.1))
+for (i in labels){
+  for (j in 1:5){
+    draw_mnist_image(mnist$train$images[mnist$train$labels == i,],j)
+  }
+}
+```
+
+#### C2. (2 pts)  Construct a binary version of the images by setting a threshold.  (You could just consider any nonzero pixel, or devise a more clever approach if you wish.)
+
+```{r}
+naive_bayes <- function(image_label){
+  unique_labels <- sort(unique(image_label[2][[1]]))
+  labels <- image_label[2][[1]]
+  image <- image_label[1][[1]]
+  binary_version_images <- list()
+  for(i in unique_labels){
+    data <- image[labels == i,]
+    binary_version_images[1] <- c(binary_version_images[1],i)
+    binary_version_images[2] <- c(binary_version_images[2],(colSums(image)+1)/nrow(image))
+  }
+return (binary_version_images)
+}
+
+
+for (i in labels){
+  for (j in 1:5){
+  naive_bayes(mnist$train$images[mnist$train$labels == i,])
+  }
+}
+
+```
+
+
+
+#### C3. (10 pts)  Using a Bernoulli model of each pixel, train a naive bayes model (that is, just calculate the vector of pixel probabilities).  You can add one pseudocount to each pixel for smoothing.
+```{r}
+
+```
+
+
+#### C4. (3 pts)  Calculate and Plot the observed proportions of each digit in the training data -- these are your priors.
+
+#### C5. (2 pts)  Make a plot showing the "average" images of each digit represented by your model.
+
+#### C6. (10 pts)  Now, train a model using a Gaussian model for each pixel.  Remember, for each pixel, you will now need to store both a $\mu$ and $\sigma$.  Write your code so that you can vary the smoothing parameter $\alpha$.
+
+#### C7. (3 pts) Using your two models, predict the labels for the test data.  Remember to work with log probabilities, and remember to consider the priors for each digit that come from the training data. 
+
+#### C8.  (5 pts) To assess the models, report the confusion matrix for the test data.  (You can either construct it manually, or use a function like confusionMatrix from the caret/e1071 packages which may be more convenient!).   Which digits are most easily confused?
+
+#### C10. (2 pts) Compute the accuracy, sensitivity, and specificity for the '1' digit (vs. all of the others.)
+
+
+
+```{r}
+# draw_mnist_image
+# plots mnist data as an image from the representation in dslabs, where each observation is a row and the pixels are in columns
+# the images are 28x28 so need to be reshaped into a matrix, and the order of pixels is flipped
+draw_mnist_image <- function(data, index) {
+  image(1:28, 1:28, matrix(data[index,], nrow=28)[ , 28:1], col = gray(seq(0, 1, 0.05)), xlab = "", ylab="")
+}
+```
+
+
